@@ -2,9 +2,11 @@
 
 A Pebble watchface that displays real-time Dexcom CGM glucose data.
 
-![Screenshot](resources/images/screenshot.png) ![Screenshot Reversed](resources/images/screenshot-reversed.png)
+![Watch photo](resources/images/watch.jpg)
 
 ## Features
+
+![Screenshot](resources/images/screenshot.png) ![Screenshot Reversed](resources/images/screenshot-reversed.png)
 
 - Current glucose value with trend arrow
 - Delta (rate of change)
@@ -13,6 +15,11 @@ A Pebble watchface that displays real-time Dexcom CGM glucose data.
 - Supports mg/dL and mmol/L
 - Configurable high/low threshold lines
 - Configurable high/low alerts
+
+## Missing Features
+
+- Doesn't handle HIGH or LOW states currently
+- Doesn't handle most error states
 
 ## Requirements
 
