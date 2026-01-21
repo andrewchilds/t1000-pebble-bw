@@ -4,6 +4,10 @@
   "version": "1.0.0",
   "description": "Displays real-time Dexcom CGM glucose data on your Pebble watch. Features current glucose value with trend arrow, delta (rate of change), time since last reading, and a 90-minute history chart with threshold lines. Configurable units (mg/dL or mmol/L) and alert thresholds. Requires Dexcom CGM with Share enabled and Dexcom Share account credentials.",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/andrewchilds/t1000-pebble-bw"
+  },
   "keywords": [
     "pebble-app"
   ],
