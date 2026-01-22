@@ -94,6 +94,9 @@ static int s_chart_count = 0;
 // Current trend
 static uint8_t s_current_trend = TREND_NONE;
 
+// Current CGM value (for layout adjustments)
+static int s_current_cgm_value = 0;
+
 // Time ago tracking
 static int s_last_minutes_ago = -1;  // -1 = no data received yet
 static time_t s_last_data_time = 0;   // When we last received data from phone
@@ -107,6 +110,7 @@ static bool s_reversed = false;
 
 // Forward declaration
 static void update_trend_icon(uint8_t trend);
+static void update_layout_for_cgm_value(int cgm_value);
 
 /**
  * Apply colors based on reversed mode to all UI elements
@@ -274,6 +278,25 @@ static void update_trend_icon(uint8_t trend) {
 }
 
 /**
+ * Update layout positions based on CGM value
+ * For 3-digit values (200-400), shift trend arrow right by 4px and delta right by 2px
+ */
+static void update_layout_for_cgm_value(int cgm_value) {
+    int cgmValueYPos = 24;
+
+    // Check if CGM value is in the 200-400 range (3-digit values that need extra space)
+    if (cgm_value >= 200 && cgm_value <= 400) {
+        // Shift trend arrow right by 4px, delta right by 2px
+        layer_set_frame(bitmap_layer_get_layer(s_trend_layer), GRect(82, cgmValueYPos + 13, 30, 30));
+        layer_set_frame(text_layer_get_layer(s_delta_layer), GRect(112, cgmValueYPos + 12, 38, 28));
+    } else {
+        // Default positions
+        layer_set_frame(bitmap_layer_get_layer(s_trend_layer), GRect(78, cgmValueYPos + 13, 30, 30));
+        layer_set_frame(text_layer_get_layer(s_delta_layer), GRect(110, cgmValueYPos + 12, 38, 28));
+    }
+}
+
+/**
  * Update time ago display based on stored data
  */
 static void update_time_ago_display() {
@@ -353,6 +376,10 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
     if (cgm_value_tuple) {
         snprintf(s_cgm_value_buffer, sizeof(s_cgm_value_buffer), "%s", cgm_value_tuple->value->cstring);
         text_layer_set_text(s_cgm_value_layer, s_cgm_value_buffer);
+
+        // Parse CGM value for layout adjustment
+        s_current_cgm_value = atoi(cgm_value_tuple->value->cstring);
+        update_layout_for_cgm_value(s_current_cgm_value);
     }
 
     // Read delta
