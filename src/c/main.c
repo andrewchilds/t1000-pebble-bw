@@ -498,24 +498,24 @@ static void main_window_load(Window *window) {
 
     // Time and date layer - single row at top, left-aligned
     s_time_date_layer = create_text_layer(
-        GRect(6, -2, bounds.size.w - 6, 28),
-        fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
+        GRect(6, -4, bounds.size.w - 6, 34),
+        fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD),
         GTextAlignmentLeft
     );
     layer_add_child(window_layer, text_layer_get_layer(s_time_date_layer));
 
-    int cgmValueYPos = 28;
+    int cgmValueYPos = 24;
 
     // CGM value layer - centered vertically at y=26, font height ~34px
     s_cgm_value_layer = create_text_layer(
-        GRect(4, cgmValueYPos, 70, 42),
-        fonts_get_system_font(FONT_KEY_BITHAM_34_MEDIUM_NUMBERS),
-        GTextAlignmentCenter
+        GRect(4, cgmValueYPos, 70, 48),
+        fonts_get_system_font(FONT_KEY_BITHAM_42_BOLD),
+        GTextAlignmentLeft
     );
     text_layer_set_text(s_cgm_value_layer, "---");
     layer_add_child(window_layer, text_layer_get_layer(s_cgm_value_layer));
 
-    s_trend_layer = bitmap_layer_create(GRect(72, cgmValueYPos + 8, 30, 30));
+    s_trend_layer = bitmap_layer_create(GRect(78, cgmValueYPos + 13, 30, 30));
     bitmap_layer_set_compositing_mode(s_trend_layer, GCompOpOr);
     bitmap_layer_set_alignment(s_trend_layer, GAlignCenter);
     const uint32_t *icons = s_reversed ? TREND_ICONS_BLACK : TREND_ICONS_WHITE;
@@ -524,7 +524,7 @@ static void main_window_load(Window *window) {
     layer_add_child(window_layer, bitmap_layer_get_layer(s_trend_layer));
 
     s_delta_layer = create_text_layer(
-        GRect(110, cgmValueYPos + 5, 38, 28),
+        GRect(110, cgmValueYPos + 12, 38, 28),
         fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
         GTextAlignmentLeft
     );
