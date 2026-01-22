@@ -127,7 +127,7 @@ function formatGlucose(mgdl) {
 		return "LOW";
 	}
 	if (mgdl > 400) {
-		return "HIGH";
+		return "HI";
 	}
 	if (settings.unit === "mmol") {
 		return mgdlToMmol(mgdl);

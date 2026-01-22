@@ -508,7 +508,7 @@ static void main_window_load(Window *window) {
 
     // CGM value layer - centered vertically at y=26, font height ~34px
     s_cgm_value_layer = create_text_layer(
-        GRect(4, cgmValueYPos, 70, 48),
+        GRect(4, cgmValueYPos, 90, 48),
         fonts_get_system_font(FONT_KEY_BITHAM_42_BOLD),
         GTextAlignmentLeft
     );

@@ -18,7 +18,6 @@ A Pebble watchface that displays real-time Dexcom CGM glucose data.
 
 ## Missing Features
 
-- Doesn't handle HIGH or LOW states currently
 - Doesn't handle most error states
 
 ## Requirements
