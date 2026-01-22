@@ -94,9 +94,6 @@ static int s_chart_count = 0;
 // Current trend
 static uint8_t s_current_trend = TREND_NONE;
 
-// Current CGM value (for layout adjustments)
-static int s_current_cgm_value = 0;
-
 // Time ago tracking
 static int s_last_minutes_ago = -1;  // -1 = no data received yet
 static time_t s_last_data_time = 0;   // When we last received data from phone
@@ -110,7 +107,7 @@ static bool s_reversed = false;
 
 // Forward declaration
 static void update_trend_icon(uint8_t trend);
-static void update_layout_for_cgm_value(int cgm_value);
+static void update_layout_for_cgm_text(const char *cgm_text);
 
 /**
  * Apply colors based on reversed mode to all UI elements
@@ -278,22 +275,35 @@ static void update_trend_icon(uint8_t trend) {
 }
 
 /**
- * Update layout positions based on CGM value
- * For 3-digit values (200-400), shift trend arrow right by 4px and delta right by 2px
+ * Update layout positions based on CGM text width
+ * Dynamically positions trend arrow and delta based on actual rendered text width
+ * Hides delta for LOW/HIGH values since there's no room
  */
-static void update_layout_for_cgm_value(int cgm_value) {
+static void update_layout_for_cgm_text(const char *cgm_text) {
     int cgmValueYPos = 24;
 
-    // Check if CGM value is in the 200-400 range (3-digit values that need extra space)
-    if (cgm_value >= 200 && cgm_value <= 400) {
-        // Shift trend arrow right by 4px, delta right by 2px
-        layer_set_frame(bitmap_layer_get_layer(s_trend_layer), GRect(82, cgmValueYPos + 13, 30, 30));
-        layer_set_frame(text_layer_get_layer(s_delta_layer), GRect(112, cgmValueYPos + 12, 38, 28));
-    } else {
-        // Default positions
-        layer_set_frame(bitmap_layer_get_layer(s_trend_layer), GRect(78, cgmValueYPos + 13, 30, 30));
-        layer_set_frame(text_layer_get_layer(s_delta_layer), GRect(110, cgmValueYPos + 12, 38, 28));
-    }
+    // Check if this is a LOW or HIGH value - hide delta in these cases
+    bool hide_delta = (strcmp(cgm_text, "LOW") == 0 || strcmp(cgm_text, "HIGH") == 0);
+    layer_set_hidden(text_layer_get_layer(s_delta_layer), hide_delta);
+
+    // Get the actual rendered width of the CGM text
+    GSize text_size = graphics_text_layout_get_content_size(
+        cgm_text,
+        fonts_get_system_font(FONT_KEY_BITHAM_42_BOLD),
+        GRect(0, 0, 110, 48),
+        GTextOverflowModeTrailingEllipsis,
+        GTextAlignmentLeft
+    );
+
+    // Position trend arrow just after the CGM text
+    // 4 is CGM layer x offset, add small gap after text
+    int trend_x = 4 + text_size.w + 2;
+    int delta_x = trend_x + 31;  // 30px icon + 1px gap
+
+    layer_set_frame(bitmap_layer_get_layer(s_trend_layer),
+                    GRect(trend_x, cgmValueYPos + 13, 30, 30));
+    layer_set_frame(text_layer_get_layer(s_delta_layer),
+                    GRect(delta_x, cgmValueYPos + 10, 38, 28));
 }
 
 /**
@@ -376,10 +386,7 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
     if (cgm_value_tuple) {
         snprintf(s_cgm_value_buffer, sizeof(s_cgm_value_buffer), "%s", cgm_value_tuple->value->cstring);
         text_layer_set_text(s_cgm_value_layer, s_cgm_value_buffer);
-
-        // Parse CGM value for layout adjustment
-        s_current_cgm_value = atoi(cgm_value_tuple->value->cstring);
-        update_layout_for_cgm_value(s_current_cgm_value);
+        update_layout_for_cgm_text(s_cgm_value_buffer);
     }
 
     // Read delta
@@ -535,7 +542,7 @@ static void main_window_load(Window *window) {
 
     // CGM value layer - centered vertically at y=26, font height ~34px
     s_cgm_value_layer = create_text_layer(
-        GRect(4, cgmValueYPos, 90, 48),
+        GRect(4, cgmValueYPos, 110, 48),
         fonts_get_system_font(FONT_KEY_BITHAM_42_BOLD),
         GTextAlignmentLeft
     );
