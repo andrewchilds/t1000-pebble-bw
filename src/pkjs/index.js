@@ -388,10 +388,13 @@ function processReadings(readings, fromCache) {
 		}
 	}
 
-	// Build history string (comma-separated values, most recent first)
+	// Build history string (value:minutesAgo pairs, most recent first)
+	// Format: "120:0,125:5,130:10" where second number is minutes ago from now
 	var history = readings
 		.map(function (r) {
-			return r.Value;
+			var timestamp = parseDexcomTimestamp(r.WT);
+			var minutesAgo = Math.round((now - timestamp) / 60000);
+			return r.Value + ":" + minutesAgo;
 		})
 		.join(",");
 
@@ -451,7 +454,7 @@ function processReadings(readings, fromCache) {
 /**
  * Calculate weighted average velocity from recent readings
  * Uses multiple time spans with heavier weighting on recent changes
- * Returns velocity in mg/dL per 5 minutes, or null if insufficient data
+ * Returns velocity in mg/dL per 5 minutes, or null if insufficient data or gaps detected
  */
 function calculateVelocity(readings) {
 	// Need at least 5 readings to calculate velocity
@@ -459,10 +462,25 @@ function calculateVelocity(readings) {
 		return null;
 	}
 
-	// Check that the first 5 values are valid (non-zero)
+	// Check that the first 5 values are valid (non-zero) and have no gaps
+	// Each reading should be ~5 minutes apart; allow up to 7 minutes to account for slight delays
+	var maxGapMs = 7 * 60 * 1000; // 7 minutes in milliseconds
 	for (var i = 0; i < 5; i++) {
 		if (!readings[i] || readings[i].Value === 0) {
 			return null;
+		}
+		// Check gap between consecutive readings (except for the last one)
+		if (i < 4) {
+			var thisTime = parseDexcomTimestamp(readings[i].WT);
+			var nextTime = parseDexcomTimestamp(readings[i + 1].WT);
+			if (!thisTime || !nextTime) {
+				return null;
+			}
+			var gap = thisTime - nextTime; // readings are most-recent-first
+			if (gap > maxGapMs) {
+				console.log("Velocity calculation skipped: gap of " + Math.round(gap / 60000) + " min between readings " + i + " and " + (i + 1));
+				return null;
+			}
 		}
 	}
 

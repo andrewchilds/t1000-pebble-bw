@@ -89,6 +89,7 @@ static char s_time_ago_buffer[16];
 
 // Chart data
 static int16_t s_chart_values[CHART_MAX_POINTS];
+static int16_t s_chart_minutes_ago[CHART_MAX_POINTS];  // Minutes ago for each point
 static int s_chart_count = 0;
 
 // Current trend
@@ -141,8 +142,8 @@ static void apply_colors() {
 }
 
 /**
- * Parse comma-separated chart history data
- * Format: "120,125,130,..." (most recent first)
+ * Parse chart history data with timestamps
+ * Format: "120:0,125:5,130:10,..." (value:minutesAgo pairs, most recent first)
  */
 static void parse_chart_history(const char *history) {
     if (history == NULL || strlen(history) == 0) {
@@ -154,15 +155,27 @@ static void parse_chart_history(const char *history) {
     const char *ptr = history;
 
     while (*ptr && s_chart_count < CHART_MAX_POINTS) {
-        // Parse next number
+        // Parse glucose value
         int value = 0;
         while (*ptr >= '0' && *ptr <= '9') {
             value = value * 10 + (*ptr - '0');
             ptr++;
         }
 
+        // Parse minutes ago (after colon)
+        int minutes_ago = 0;
+        if (*ptr == ':') {
+            ptr++;
+            while (*ptr >= '0' && *ptr <= '9') {
+                minutes_ago = minutes_ago * 10 + (*ptr - '0');
+                ptr++;
+            }
+        }
+
         if (value > 0) {
-            s_chart_values[s_chart_count++] = (int16_t)value;
+            s_chart_values[s_chart_count] = (int16_t)value;
+            s_chart_minutes_ago[s_chart_count] = (int16_t)minutes_ago;
+            s_chart_count++;
         }
 
         // Skip comma
@@ -218,18 +231,14 @@ static void chart_layer_update_proc(Layer *layer, GContext *ctx) {
 
     // Draw dots for each data point
     // Data comes in most-recent-first, so we plot right-to-left
+    // X position is based on actual timestamp, not array index
     graphics_context_set_fill_color(ctx, fg_color);
 
-    // Calculate pixel offset: smooth scroll left based on how stale the data is
-    // Chart spans 120 minutes (CHART_MAX_POINTS - 1 = 23 intervals of 5 min each)
-    int pixel_offset = 0;
-    if (s_last_data_time > 0 && s_last_minutes_ago >= 0) {
+    // Calculate elapsed time since data was received to adjust positions
+    int elapsed_minutes = 0;
+    if (s_last_data_time > 0) {
         time_t now = time(NULL);
-        int elapsed_minutes = (int)((now - s_last_data_time) / 60);
-        int current_minutes_ago = s_last_minutes_ago + elapsed_minutes;
-        // Convert minutes to pixels using fixed dot spacing
-        // pixels_per_minute = CHART_DOT_SPACING / 5
-        pixel_offset = (current_minutes_ago * CHART_DOT_SPACING) / 5;
+        elapsed_minutes = (int)((now - s_last_data_time) / 60);
     }
 
     for (int i = 0; i < s_chart_count; i++) {
@@ -239,11 +248,17 @@ static void chart_layer_update_proc(Layer *layer, GContext *ctx) {
         if (value < CHART_Y_MIN) value = CHART_Y_MIN;
         if (value > CHART_Y_MAX) value = CHART_Y_MAX;
 
-        // Calculate X position (rightmost = most recent = index 0)
-        // Apply pixel offset to smoothly shift dots left based on data staleness
-        // Use fixed dot spacing instead of dynamic calculation
-        int x = bounds.origin.x + bounds.size.w - margin -
-                (i * CHART_DOT_SPACING) - pixel_offset;
+        // Calculate X position based on actual minutes ago (plus elapsed time)
+        // Right edge = 0 minutes ago, left edge = 120 minutes ago
+        // pixels_per_minute = CHART_DOT_SPACING / 5
+        int total_minutes_ago = s_chart_minutes_ago[i] + elapsed_minutes;
+        int pixel_offset = (total_minutes_ago * CHART_DOT_SPACING) / 5;
+        int x = bounds.origin.x + bounds.size.w - margin - pixel_offset;
+
+        // Skip points that have scrolled off the left edge
+        if (x < bounds.origin.x + margin) {
+            continue;
+        }
 
         // Calculate Y position (invert because screen Y increases downward)
         int y = bounds.origin.y + margin + chart_height -
@@ -656,8 +671,8 @@ static void init() {
     app_message_register_outbox_sent(outbox_sent_callback);
 
     // Open AppMessage with appropriate buffer sizes
-    // Inbox needs to hold chart history (18 values * ~4 chars each = ~80) plus other fields
-    app_message_open(256, 64);
+    // Inbox needs to hold chart history (24 values * ~8 chars each = ~192) plus other fields
+    app_message_open(512, 64);
 }
 
 /**
