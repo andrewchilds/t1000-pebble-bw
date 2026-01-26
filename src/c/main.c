@@ -56,6 +56,8 @@ static TextLayer *s_time_ago_layer;
 static BitmapLayer *s_trend_layer;
 static GBitmap *s_trend_bitmap;
 static TextLayer *s_setup_layer;
+static Layer *s_loading_layer;
+static AppTimer *s_loading_timer;
 
 // Trend arrow resources (white on black for normal mode)
 static const uint32_t TREND_ICONS_WHITE[] = {
@@ -109,9 +111,23 @@ static bool s_reversed = false;
 // Retry tracking for outbox failures
 static bool s_is_retry = false;
 
-// Forward declaration
+// Loading state
+static bool s_is_loading = true;
+static int s_loading_frame = 0;
+static AppTimer *s_loading_timeout_timer;
+#define LOADING_DOT_COUNT 3
+#define LOADING_FRAMES_PER_DOT 6
+#define LOADING_ANIMATION_INTERVAL 100  // ms per frame
+#define LOADING_TIMEOUT_MS 15000  // 15 seconds
+
+// Forward declarations
 static void update_trend_icon(uint8_t trend);
 static void update_layout_for_cgm_text(const char *cgm_text);
+static void loading_timer_callback(void *data);
+static void loading_timeout_callback(void *data);
+static void show_data_layers(void);
+static void hide_data_layers(void);
+static void hide_loading_show_data(void);
 
 /**
  * Apply colors based on reversed mode to all UI elements
@@ -139,6 +155,137 @@ static void apply_colors() {
     if (s_chart_layer) {
         layer_mark_dirty(s_chart_layer);
     }
+
+    // Mark loading layer dirty if visible
+    if (s_loading_layer) {
+        layer_mark_dirty(s_loading_layer);
+    }
+}
+
+/**
+ * Draw the loading animation (three jumping dots)
+ * Animation has 6 frames per dot cycle for smoother motion
+ */
+static void loading_layer_update_proc(Layer *layer, GContext *ctx) {
+    GRect bounds = layer_get_bounds(layer);
+    GColor fg_color = s_reversed ? GColorBlack : GColorWhite;
+
+    graphics_context_set_fill_color(ctx, fg_color);
+
+    // Dot configuration
+    int dot_radius = 3;
+    int dot_spacing = 14;
+    int total_width = (LOADING_DOT_COUNT - 1) * dot_spacing;
+    int start_x = (bounds.size.w - total_width) / 2;
+    int base_y = bounds.size.h / 2;
+
+    // Y offsets for smooth jump animation
+    // Frame 0: starting up, 1: peak, 2: coming down, 3-5: at rest
+    static const int jump_offsets[LOADING_FRAMES_PER_DOT] = { -4, -7, -3, 0, 0, 0 };
+
+    for (int i = 0; i < LOADING_DOT_COUNT; i++) {
+        int x = start_x + i * dot_spacing;
+
+        // Calculate which frame this dot is in based on global frame
+        // Each dot is offset by 2 frames to stagger the jumps evenly
+        int dot_frame = (s_loading_frame - i * 2 + LOADING_FRAMES_PER_DOT * LOADING_DOT_COUNT) % LOADING_FRAMES_PER_DOT;
+        int y_offset = jump_offsets[dot_frame];
+
+        int y = base_y + y_offset;
+        graphics_fill_circle(ctx, GPoint(x, y), dot_radius);
+    }
+}
+
+/**
+ * Loading animation timer callback
+ */
+static void loading_timer_callback(void *data) {
+    if (!s_is_loading) {
+        s_loading_timer = NULL;
+        return;
+    }
+
+    // Advance to next frame
+    s_loading_frame = (s_loading_frame + 1) % LOADING_FRAMES_PER_DOT;
+
+    // Redraw the loading layer
+    if (s_loading_layer) {
+        layer_mark_dirty(s_loading_layer);
+    }
+
+    // Schedule next frame
+    s_loading_timer = app_timer_register(LOADING_ANIMATION_INTERVAL, loading_timer_callback, NULL);
+}
+
+/**
+ * Loading timeout callback - stop animation and show error message
+ */
+static void loading_timeout_callback(void *data) {
+    s_loading_timeout_timer = NULL;
+
+    if (!s_is_loading) {
+        return;
+    }
+
+    s_is_loading = false;
+
+    // Cancel animation timer
+    if (s_loading_timer) {
+        app_timer_cancel(s_loading_timer);
+        s_loading_timer = NULL;
+    }
+
+    // Hide loading layer, show error in setup layer
+    layer_set_hidden(s_loading_layer, true);
+    text_layer_set_text(s_setup_layer, "Unable to connect");
+    layer_set_hidden(text_layer_get_layer(s_setup_layer), false);
+}
+
+/**
+ * Show all CGM data layers
+ */
+static void show_data_layers(void) {
+    layer_set_hidden(text_layer_get_layer(s_cgm_value_layer), false);
+    layer_set_hidden(bitmap_layer_get_layer(s_trend_layer), false);
+    layer_set_hidden(text_layer_get_layer(s_delta_layer), false);
+    layer_set_hidden(text_layer_get_layer(s_time_ago_layer), false);
+    layer_set_hidden(s_chart_layer, false);
+}
+
+/**
+ * Hide all CGM data layers
+ */
+static void hide_data_layers(void) {
+    layer_set_hidden(text_layer_get_layer(s_cgm_value_layer), true);
+    layer_set_hidden(bitmap_layer_get_layer(s_trend_layer), true);
+    layer_set_hidden(text_layer_get_layer(s_delta_layer), true);
+    layer_set_hidden(text_layer_get_layer(s_time_ago_layer), true);
+    layer_set_hidden(s_chart_layer, true);
+}
+
+/**
+ * Hide loading state and show CGM data
+ */
+static void hide_loading_show_data(void) {
+    if (!s_is_loading) {
+        return;
+    }
+
+    s_is_loading = false;
+
+    // Cancel loading timers
+    if (s_loading_timer) {
+        app_timer_cancel(s_loading_timer);
+        s_loading_timer = NULL;
+    }
+    if (s_loading_timeout_timer) {
+        app_timer_cancel(s_loading_timeout_timer);
+        s_loading_timeout_timer = NULL;
+    }
+
+    // Hide loading layer, show data layers
+    layer_set_hidden(s_loading_layer, true);
+    show_data_layers();
 }
 
 /**
@@ -399,6 +546,11 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
  * AppMessage received callback
  */
 static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
+    // Hide loading state on first data received
+    if (s_is_loading) {
+        hide_loading_show_data();
+    }
+
     // Read CGM value
     Tuple *cgm_value_tuple = dict_find(iterator, KEY_CGM_VALUE);
     if (cgm_value_tuple) {
@@ -485,17 +637,11 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
     Tuple *needs_setup_tuple = dict_find(iterator, KEY_NEEDS_SETUP);
     if (needs_setup_tuple && needs_setup_tuple->value->uint8) {
         // Hide CGM data, show setup message
-        layer_set_hidden(text_layer_get_layer(s_cgm_value_layer), true);
-        layer_set_hidden(bitmap_layer_get_layer(s_trend_layer), true);
-        layer_set_hidden(text_layer_get_layer(s_delta_layer), true);
-        layer_set_hidden(text_layer_get_layer(s_time_ago_layer), true);
+        hide_data_layers();
         layer_set_hidden(text_layer_get_layer(s_setup_layer), false);
     } else if (needs_setup_tuple) {
         // Show CGM data, hide setup message
-        layer_set_hidden(text_layer_get_layer(s_cgm_value_layer), false);
-        layer_set_hidden(bitmap_layer_get_layer(s_trend_layer), false);
-        layer_set_hidden(text_layer_get_layer(s_delta_layer), false);
-        layer_set_hidden(text_layer_get_layer(s_time_ago_layer), false);
+        show_data_layers();
         layer_set_hidden(text_layer_get_layer(s_setup_layer), true);
     }
 }
@@ -585,7 +731,7 @@ static void main_window_load(Window *window) {
         fonts_get_system_font(FONT_KEY_BITHAM_42_BOLD),
         GTextAlignmentLeft
     );
-    text_layer_set_text(s_cgm_value_layer, "---");
+    text_layer_set_text(s_cgm_value_layer, "");
     layer_add_child(window_layer, text_layer_get_layer(s_cgm_value_layer));
 
     s_trend_layer = bitmap_layer_create(GRect(78, cgmValueYPos + 13, 30, 30));
@@ -628,6 +774,16 @@ static void main_window_load(Window *window) {
     layer_set_hidden(text_layer_get_layer(s_setup_layer), true);
     layer_add_child(window_layer, text_layer_get_layer(s_setup_layer));
 
+    // Loading layer - centered in the data area, shows jumping dots
+    s_loading_layer = layer_create(GRect(0, 24, bounds.size.w, 120));
+    layer_set_update_proc(s_loading_layer, loading_layer_update_proc);
+    layer_add_child(window_layer, s_loading_layer);
+
+    // Start in loading state - hide data layers, start animation and timeout
+    hide_data_layers();
+    s_loading_timer = app_timer_register(LOADING_ANIMATION_INTERVAL, loading_timer_callback, NULL);
+    s_loading_timeout_timer = app_timer_register(LOADING_TIMEOUT_MS, loading_timeout_callback, NULL);
+
     // Initialize time display
     update_time();
 }
@@ -636,6 +792,16 @@ static void main_window_load(Window *window) {
  * Main window unload
  */
 static void main_window_unload(Window *window) {
+    // Cancel loading timers if running
+    if (s_loading_timer) {
+        app_timer_cancel(s_loading_timer);
+        s_loading_timer = NULL;
+    }
+    if (s_loading_timeout_timer) {
+        app_timer_cancel(s_loading_timeout_timer);
+        s_loading_timeout_timer = NULL;
+    }
+
     text_layer_destroy(s_time_date_layer);
     text_layer_destroy(s_cgm_value_layer);
     text_layer_destroy(s_delta_layer);
@@ -643,6 +809,7 @@ static void main_window_unload(Window *window) {
     text_layer_destroy(s_setup_layer);
     bitmap_layer_destroy(s_trend_layer);
     layer_destroy(s_chart_layer);
+    layer_destroy(s_loading_layer);
 
     if (s_trend_bitmap) {
         gbitmap_destroy(s_trend_bitmap);
