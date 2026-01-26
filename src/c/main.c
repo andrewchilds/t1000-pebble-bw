@@ -519,6 +519,10 @@ static void update_time_ago_display() {
     // Update display
     if (current_minutes_ago == 0) {
         snprintf(s_time_ago_buffer, sizeof(s_time_ago_buffer), "now");
+    } else if (current_minutes_ago >= 90) {
+        int hours = current_minutes_ago / 60;
+        int mins = current_minutes_ago % 60;
+        snprintf(s_time_ago_buffer, sizeof(s_time_ago_buffer), "%dh %dm ago", hours, mins);
     } else {
         snprintf(s_time_ago_buffer, sizeof(s_time_ago_buffer), "%dm ago", current_minutes_ago);
     }
