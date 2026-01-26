@@ -1,7 +1,7 @@
 {
   "name": "T1000",
   "author": "Andrew Childs",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Displays real-time Dexcom CGM glucose data on your Pebble watch.",
   "private": true,
   "repository": {
