@@ -16,10 +16,12 @@ A Pebble watchface that displays real-time Dexcom CGM glucose data and provides 
 - Supports mg/dL and mmol/L
 - Configurable high/low threshold lines
 - Configurable high/low alerts
+- Shows an alert icon if the watchface loses connection with the iOS companion app.
 
 ## Requirements
 
-- Pebble / Pebble 2 (Aplite) or Pebble Time / Time Steel (Basalt)
+- Pebble / Pebble 2 (Aplite)
+- Pebble Time / Time Steel (Basalt) (Untested)
 - Dexcom CGM with Share enabled
 - Dexcom Share account credentials
 
@@ -33,6 +35,12 @@ https://apps.rebble.io/en_US/application/6972fd68ae32660009f7c242
 ```sh
 npm install
 pebble clean && pebble build && pebble install --cloudpebble --logs
+```
+
+Build and install locally:
+
+```sh
+npm run sideload
 ```
 
 ## License
