@@ -118,14 +118,16 @@ static bool s_reversed = false;
 // Retry tracking for outbox failures
 static bool s_is_retry = false;
 
-// Sync spinner state (shown when waiting for phone response)
+// Sync spinner state (shown during data send/receive)
 static bool s_is_syncing = false;
 static bool s_sync_error = false;  // Show X icon on error
 static int s_sync_frame = 0;
 static AppTimer *s_sync_timer = NULL;
+static AppTimer *s_sync_stop_timer = NULL;  // Timer to auto-stop spinner
 #define SYNC_SPINNER_FRAMES 8
 #define SYNC_SPINNER_INTERVAL 100  // ms per frame
 #define SYNC_ERROR_DISPLAY_MS 3000  // Show error X for 3 seconds
+#define SYNC_DISPLAY_MS 500  // Show sync spinner for 500ms on data send/receive
 
 // Loading state
 static bool s_is_loading = true;
@@ -146,6 +148,7 @@ static void show_data_layers(void);
 static void hide_data_layers(void);
 static void hide_loading_show_data(void);
 static void sync_timer_callback(void *data);
+static void sync_stop_timer_callback(void *data);
 static void start_sync_spinner(void);
 static void stop_sync_spinner(void);
 static void show_sync_error(void);
@@ -351,11 +354,25 @@ static void sync_timer_callback(void *data) {
 }
 
 /**
- * Start the sync spinner animation
+ * Timer callback to auto-stop sync spinner
+ */
+static void sync_stop_timer_callback(void *data) {
+    s_sync_stop_timer = NULL;
+    stop_sync_spinner();
+}
+
+/**
+ * Start the sync spinner animation (auto-stops after SYNC_DISPLAY_MS)
  */
 static void start_sync_spinner(void) {
+    // Cancel any pending stop timer and restart the display period
+    if (s_sync_stop_timer) {
+        app_timer_cancel(s_sync_stop_timer);
+    }
+    s_sync_stop_timer = app_timer_register(SYNC_DISPLAY_MS, sync_stop_timer_callback, NULL);
+
     if (s_is_syncing) {
-        return;  // Already running
+        return;  // Animation already running, just reset the stop timer
     }
 
     s_is_syncing = true;
@@ -384,6 +401,11 @@ static void stop_sync_spinner(void) {
         s_sync_timer = NULL;
     }
 
+    if (s_sync_stop_timer) {
+        app_timer_cancel(s_sync_stop_timer);
+        s_sync_stop_timer = NULL;
+    }
+
     if (s_sync_layer) {
         layer_mark_dirty(s_sync_layer);
     }
@@ -409,9 +431,13 @@ static void show_sync_error(void) {
     s_is_syncing = false;
     s_sync_error = true;
 
-    // Cancel any existing timer
+    // Cancel any existing timers
     if (s_sync_timer) {
         app_timer_cancel(s_sync_timer);
+    }
+    if (s_sync_stop_timer) {
+        app_timer_cancel(s_sync_stop_timer);
+        s_sync_stop_timer = NULL;
     }
 
     // Schedule timer to clear error state
@@ -835,8 +861,8 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
  * AppMessage received callback
  */
 static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
-    // Stop sync spinner - we got a response
-    stop_sync_spinner();
+    // Show sync spinner briefly to indicate data reception
+    start_sync_spinner();
 
     // Hide loading state on first data received
     if (s_is_loading) {
@@ -982,6 +1008,7 @@ static void outbox_sent_callback(DictionaryIterator *iterator, void *context) {
     APP_LOG(APP_LOG_LEVEL_DEBUG, "Outbox send success");
     // Reset retry flag on success so next failure can retry
     s_is_retry = false;
+    // Spinner will auto-stop via the timer scheduled in start_sync_spinner
 }
 
 /**
@@ -1118,10 +1145,14 @@ static void main_window_unload(Window *window) {
         s_loading_timeout_timer = NULL;
     }
 
-    // Cancel sync timer if running
+    // Cancel sync timers if running
     if (s_sync_timer) {
         app_timer_cancel(s_sync_timer);
         s_sync_timer = NULL;
+    }
+    if (s_sync_stop_timer) {
+        app_timer_cancel(s_sync_stop_timer);
+        s_sync_stop_timer = NULL;
     }
 
     text_layer_destroy(s_time_date_layer);
