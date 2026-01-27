@@ -34,12 +34,12 @@ https://apps.rebble.io/en_US/application/6972fd68ae32660009f7c242
 
 ```sh
 npm install
-pebble clean && pebble build && pebble install --cloudpebble --logs
 ```
 
 Build and install locally:
 
 ```sh
+# pebble clean && pebble build && pebble install --cloudpebble --logs
 npm run sideload
 ```
 
