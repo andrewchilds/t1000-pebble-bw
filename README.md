@@ -17,10 +17,6 @@ A Pebble watchface that displays real-time Dexcom CGM glucose data and provides 
 - Configurable high/low threshold lines
 - Configurable high/low alerts
 
-## Missing Features
-
-- Doesn't handle most error states
-
 ## Requirements
 
 - Pebble / Pebble 2 (Aplite) or Pebble Time / Time Steel (Basalt)
