@@ -51,6 +51,7 @@ static Window *s_main_window;
 static Layer *s_chart_layer;
 static Layer *s_battery_layer;
 static Layer *s_sync_layer;
+static Layer *s_alert_layer;
 static TextLayer *s_time_date_layer;
 static TextLayer *s_cgm_value_layer;
 static TextLayer *s_delta_layer;
@@ -117,6 +118,7 @@ static bool s_reversed = false;
 
 // Retry tracking for outbox failures
 static bool s_is_retry = false;
+static bool s_has_outbox_failure = false;  // True after retry also fails
 
 // Sync spinner state (shown during data send/receive)
 static bool s_is_syncing = false;
@@ -125,7 +127,7 @@ static AppTimer *s_sync_timer = NULL;
 static AppTimer *s_sync_stop_timer = NULL;  // Timer to auto-stop spinner
 #define SYNC_SPINNER_FRAMES 8
 #define SYNC_SPINNER_INTERVAL 100  // ms per frame
-#define SYNC_DISPLAY_MS 500  // Show sync spinner for 500ms on data send/receive
+#define SYNC_DISPLAY_MS 400  // Show sync spinner for a certain period of time on data send/receive
 
 // Loading state
 static bool s_is_loading = true;
@@ -149,6 +151,7 @@ static void sync_timer_callback(void *data);
 static void sync_stop_timer_callback(void *data);
 static void start_sync_spinner(void);
 static void stop_sync_spinner(void);
+static void update_alert_visibility(void);
 
 /**
  * Apply colors based on reversed mode to all UI elements
@@ -191,6 +194,11 @@ static void apply_colors() {
     // Mark sync layer dirty to redraw with new colors
     if (s_sync_layer) {
         layer_mark_dirty(s_sync_layer);
+    }
+
+    // Mark alert layer dirty to redraw with new colors
+    if (s_alert_layer) {
+        layer_mark_dirty(s_alert_layer);
     }
 }
 
@@ -322,6 +330,63 @@ static void sync_layer_update_proc(Layer *layer, GContext *ctx) {
 }
 
 /**
+ * Draw the alert triangle icon (shown when data is stale AND connection failed)
+ */
+static void alert_layer_update_proc(Layer *layer, GContext *ctx) {
+    GRect bounds = layer_get_bounds(layer);
+    GColor fg_color = s_reversed ? GColorBlack : GColorWhite;
+
+    int cx = bounds.size.w / 2;
+    int cy = bounds.size.h / 2;
+
+    // Draw triangle outline
+    graphics_context_set_stroke_color(ctx, fg_color);
+    graphics_context_set_stroke_width(ctx, 2);
+
+    // Triangle points (pointing up)
+    GPoint top = GPoint(cx, cy - 5);
+    GPoint bottom_left = GPoint(cx - 5, cy + 4);
+    GPoint bottom_right = GPoint(cx + 5, cy + 4);
+
+    graphics_draw_line(ctx, top, bottom_left);
+    graphics_draw_line(ctx, bottom_left, bottom_right);
+    graphics_draw_line(ctx, bottom_right, top);
+
+    // Draw exclamation mark inside
+    graphics_context_set_fill_color(ctx, fg_color);
+    graphics_fill_rect(ctx, GRect(cx - 1, cy - 5, 2, 5), 0, GCornerNone);
+    graphics_fill_rect(ctx, GRect(cx - 1, cy + 2, 2, 2), 0, GCornerNone);
+}
+
+/**
+ * Update alert icon visibility based on data staleness and connection status
+ * Alert shown when: data 10+ min old AND outbox failure (including failed retry)
+ * Alert hidden when: sync spinner is showing
+ */
+static void update_alert_visibility(void) {
+    if (!s_alert_layer) {
+        return;
+    }
+
+    // Don't update alert while syncing - it will be updated when sync stops
+    if (s_is_syncing) {
+        return;
+    }
+
+    // Calculate current data age
+    int current_minutes_ago = 0;
+    if (s_last_minutes_ago >= 0 && s_last_data_time > 0) {
+        time_t now = time(NULL);
+        int elapsed_minutes = (int)((now - s_last_data_time) / 60);
+        current_minutes_ago = s_last_minutes_ago + elapsed_minutes;
+    }
+
+    // Show alert if data is 10+ minutes old AND we have an outbox failure
+    bool show_alert = (current_minutes_ago >= 10) && s_has_outbox_failure;
+    layer_set_hidden(s_alert_layer, !show_alert);
+}
+
+/**
  * Sync spinner timer callback
  */
 static void sync_timer_callback(void *data) {
@@ -359,6 +424,11 @@ static void start_sync_spinner(void) {
         app_timer_cancel(s_sync_stop_timer);
     }
     s_sync_stop_timer = app_timer_register(SYNC_DISPLAY_MS, sync_stop_timer_callback, NULL);
+
+    // Hide alert while syncing
+    if (s_alert_layer) {
+        layer_set_hidden(s_alert_layer, true);
+    }
 
     if (s_is_syncing) {
         return;  // Animation already running, just reset the stop timer
@@ -398,6 +468,9 @@ static void stop_sync_spinner(void) {
     if (s_sync_layer) {
         layer_mark_dirty(s_sync_layer);
     }
+
+    // Re-evaluate alert visibility now that sync is done
+    update_alert_visibility();
 }
 
 /**
@@ -702,7 +775,7 @@ static void update_layout_for_cgm_text(const char *cgm_text) {
     // Position trend arrow just after the CGM text
     // 4 is CGM layer x offset, add small gap after text
     int trend_x = 4 + text_size.w + 3;
-    int delta_x = trend_x + 33;
+    int delta_x = trend_x + 32;
 
     layer_set_frame(bitmap_layer_get_layer(s_trend_layer),
                     GRect(trend_x, cgmValueYPos + 13, 30, 30));
@@ -745,6 +818,9 @@ static void update_time_ago_display() {
         snprintf(s_time_ago_buffer, sizeof(s_time_ago_buffer), "%dm ago", current_minutes_ago);
     }
     text_layer_set_text(s_time_ago_layer, s_time_ago_buffer);
+
+    // Update alert visibility based on staleness
+    update_alert_visibility();
 }
 
 /**
@@ -813,6 +889,9 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
  * AppMessage received callback
  */
 static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
+    // Clear outbox failure flag on successful communication
+    s_has_outbox_failure = false;
+
     // Show sync spinner briefly to indicate data reception
     start_sync_spinner();
 
@@ -944,11 +1023,13 @@ static void outbox_failed_callback(DictionaryIterator *iterator, AppMessageResul
         } else {
             APP_LOG(APP_LOG_LEVEL_ERROR, "Retry outbox_begin failed: %d", result);
             s_is_retry = false;
+            s_has_outbox_failure = true;
             stop_sync_spinner();
         }
     } else {
         APP_LOG(APP_LOG_LEVEL_ERROR, "Retry also failed, giving up");
         s_is_retry = false;
+        s_has_outbox_failure = true;
         stop_sync_spinner();
     }
 }
@@ -1059,6 +1140,12 @@ static void main_window_load(Window *window) {
     layer_set_update_proc(s_sync_layer, sync_layer_update_proc);
     layer_add_child(window_layer, s_sync_layer);
 
+    // Alert triangle layer - same position as sync layer (mutually exclusive visibility)
+    s_alert_layer = layer_create(GRect(35, 148, 16, 16));
+    layer_set_update_proc(s_alert_layer, alert_layer_update_proc);
+    layer_set_hidden(s_alert_layer, true);  // Hidden by default
+    layer_add_child(window_layer, s_alert_layer);
+
     // Setup message layer - centered, covers chart area, hidden by default
     s_setup_layer = create_text_layer(
         GRect(6, 50, bounds.size.w - 12, 74),
@@ -1118,6 +1205,7 @@ static void main_window_unload(Window *window) {
     layer_destroy(s_loading_layer);
     layer_destroy(s_battery_layer);
     layer_destroy(s_sync_layer);
+    layer_destroy(s_alert_layer);
 
     if (s_trend_bitmap) {
         gbitmap_destroy(s_trend_bitmap);
